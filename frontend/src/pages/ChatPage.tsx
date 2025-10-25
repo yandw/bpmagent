@@ -116,15 +116,25 @@ const ChatPage: React.FC = () => {
   return (
     <Layout className="chat-container">
       <Header className="chat-header">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <Title level={4} style={{ margin: 0, color: '#1677ff' }}>
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center',
+          height: '100%',
+          width: '100%'
+        }}>
+          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <Title level={4} style={{ margin: 0, color: '#1677ff', lineHeight: 1.2 }}>
               BPM Agent
             </Title>
-            <Text type="secondary">智能业务流程助手</Text>
+            <Text type="secondary" style={{ fontSize: '12px', lineHeight: 1 }}>智能业务流程助手</Text>
           </div>
           
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: 16,
+            marginLeft: 'auto'
+          }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div 
                 className={`status-dot ${connectionStatus === 'connected' ? '' : 'error'}`}
@@ -153,8 +163,18 @@ const ChatPage: React.FC = () => {
       </Content>
 
       <Footer className="chat-input-area">
-        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-          <div style={{ flex: 1 }}>
+        <div style={{ 
+          display: 'flex', 
+          gap: 8, 
+          alignItems: 'flex-end',
+          justifyContent: 'center',
+          maxWidth: '100%',
+          margin: '0 auto'
+        }}>
+          <div style={{ 
+            flex: 1, 
+            maxWidth: '600px'
+          }}>
             <TextArea
               ref={inputRef}
               value={inputValue}
@@ -169,10 +189,11 @@ const ChatPage: React.FC = () => {
               }
               autoSize={{ minRows: 1, maxRows: 4 }}
               disabled={isLoading || !isConnected}
+              style={{ textAlign: 'left' }}
             />
           </div>
           
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
             <FileUpload
               onUpload={handleFileUpload}
               loading={isUploading}

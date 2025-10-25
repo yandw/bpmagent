@@ -11,6 +11,9 @@ class IntentType(str, Enum):
     PURCHASE_REQUEST = "purchase_request"  # 采购申请
     CONTRACT_APPROVAL = "contract_approval"  # 合同审批
     FORM_FILLING = "form_filling"  # 表单填写
+    OCR_PROCESSING = "ocr_processing"  # OCR处理
+    QUESTION_ANSWERING = "question_answering"  # 问答
+    DATA_EXTRACTION = "data_extraction"  # 数据提取
     UNKNOWN = "unknown"  # 未知意图
 
 

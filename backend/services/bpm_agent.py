@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, AsyncGenerator
 from datetime import datetime
 
 from backend.services.ai import create_ai_service, IntentType, IntentResult, WebPageAnalysis
@@ -34,6 +34,60 @@ class BPMAgentService:
         
         logger.info(f"BPM代理服务已初始化，用户: {user.username}, 会话: {session.session_id}")
     
+    async def process_user_message_stream(self, message: str, message_type: str = "text") -> AsyncGenerator[Dict[str, Any], None]:
+        """处理用户消息的流式输出版本"""
+        try:
+            # 记录用户消息
+            self.conversation_history.append({
+                "role": "user",
+                "content": message,
+                "timestamp": datetime.now(),
+                "type": message_type
+            })
+            
+            # 创建任务历史记录
+            task_history = TaskHistory(
+                user_id=self.user.id,
+                task_type="message_processing",
+                task_status="processing",
+                input_data={"message": message, "message_type": message_type}
+            )
+            self.db.add(task_history)
+            self.db.commit()
+            self.db.refresh(task_history)
+            
+            # AI意图识别
+            intent_result = await self.ai_service.recognize_intent(message)
+            
+            # 发送意图识别结果
+            yield {
+                "type": "intent",
+                "data": {
+                    "intent": intent_result.intent.value,
+                    "confidence": intent_result.confidence
+                }
+            }
+            
+            # 根据意图处理消息 - 流式版本
+            async for chunk in self._handle_intent_stream(intent_result, message, task_history):
+                yield chunk
+            
+        except Exception as e:
+            logger.error(f"处理用户消息失败: {e}")
+            
+            # 更新任务状态为失败
+            if 'task_history' in locals():
+                task_history.status = "failed"
+                task_history.bmp_response = f"处理失败: {str(e)}"
+                self.db.commit()
+            
+            yield {
+                "type": "error",
+                "data": {
+                    "message": "抱歉，处理您的请求时出现了错误，请稍后重试。"
+                }
+            }
+
     async def process_user_message(self, message: str, message_type: str = "text") -> Dict[str, Any]:
         """处理用户消息的主要入口"""
         try:
@@ -94,6 +148,43 @@ class BPMAgentService:
                 "actions": []
             }
     
+    async def _handle_intent_stream(self, intent_result: IntentResult, message: str, task_history: TaskHistory) -> AsyncGenerator[Dict[str, Any], None]:
+        """根据意图处理消息 - 流式版本"""
+        
+        if intent_result.intent == IntentType.FORM_FILLING:
+            # 表单填写不需要流式输出，直接返回结果
+            result = await self._handle_form_filling(intent_result, message, task_history)
+            yield {
+                "type": "message",
+                "data": result
+            }
+        
+        elif intent_result.intent == IntentType.OCR_PROCESSING:
+            # OCR处理不需要流式输出
+            result = await self._handle_ocr_request(intent_result, message, task_history)
+            yield {
+                "type": "message", 
+                "data": result
+            }
+        
+        elif intent_result.intent == IntentType.QUESTION_ANSWERING:
+            # 问答需要流式输出
+            async for chunk in self._handle_question_answering_stream(intent_result, message, task_history):
+                yield chunk
+        
+        elif intent_result.intent == IntentType.DATA_EXTRACTION:
+            # 数据提取不需要流式输出
+            result = await self._handle_data_extraction(intent_result, message, task_history)
+            yield {
+                "type": "message",
+                "data": result
+            }
+        
+        else:
+            # 一般对话需要流式输出
+            async for chunk in self._handle_general_conversation_stream(intent_result, message, task_history):
+                yield chunk
+
     async def _handle_intent(self, intent_result: IntentResult, message: str, task_history: TaskHistory) -> Dict[str, Any]:
         """根据意图处理消息"""
         
@@ -311,6 +402,120 @@ class BPMAgentService:
                 }]
             }
     
+    async def _handle_general_conversation_stream(self, intent_result: IntentResult, message: str, task_history: TaskHistory) -> AsyncGenerator[Dict[str, Any], None]:
+        """处理一般对话 - 流式版本"""
+        try:
+            # 构建上下文
+            context = {
+                "user_message": message,
+                "session_status": "active",
+                "extracted_data_count": len(self.extracted_data)
+            }
+            
+            # 使用AI服务生成流式回复
+            full_response = ""
+            async for chunk in self.ai_service.generate_response_stream(message, context):
+                full_response += chunk
+                yield {
+                    "type": "message_chunk",
+                    "data": {
+                        "content": chunk,
+                        "message_type": "conversation"
+                    }
+                }
+            
+            # 发送完成信号
+            yield {
+                "type": "message_complete",
+                "data": {
+                    "full_message": full_response,
+                    "message_type": "conversation",
+                    "intent": intent_result.intent.value,
+                    "actions": [{
+                        "type": "general_response",
+                        "context": context
+                    }]
+                }
+            }
+            
+            # 记录完整响应到对话历史
+            self.conversation_history.append({
+                "role": "assistant",
+                "content": full_response,
+                "timestamp": datetime.now(),
+                "intent": intent_result.intent.value,
+                "actions": [{
+                    "type": "general_response",
+                    "context": context
+                }]
+            })
+            
+            # 更新任务历史
+            task_history.ai_analysis = intent_result.dict()
+            task_history.bmp_response = full_response
+            task_history.status = "completed"
+            self.db.commit()
+            
+        except Exception as e:
+            logger.error(f"处理一般对话失败: {e}")
+            yield {
+                "type": "error",
+                "data": {
+                    "message": "我正在学习如何更好地理解您的需求。请尝试更具体地描述您需要的帮助。"
+                }
+            }
+
+    async def _handle_question_answering_stream(self, intent_result: IntentResult, message: str, task_history: TaskHistory) -> AsyncGenerator[Dict[str, Any], None]:
+        """处理问答 - 流式版本"""
+        try:
+            # 构建上下文
+            context = {
+                "user_message": message,
+                "session_status": "active",
+                "extracted_data": self.extracted_data
+            }
+            
+            # 使用AI服务生成流式回复
+            full_response = ""
+            async for chunk in self.ai_service.generate_response_stream(message, context):
+                full_response += chunk
+                yield {
+                    "type": "message_chunk",
+                    "data": {
+                        "content": chunk,
+                        "message_type": "question_answer"
+                    }
+                }
+            
+            # 发送完成信号
+            yield {
+                "type": "message_complete",
+                "data": {
+                    "full_message": full_response,
+                    "message_type": "question_answer",
+                    "intent": intent_result.intent.value,
+                    "actions": [{
+                        "type": "question_answer",
+                        "context": context
+                    }]
+                }
+            }
+            
+            # 更新任务历史
+            task_history.ai_analysis = intent_result.dict()
+            task_history.bmp_response = full_response
+            task_history.status = "completed"
+            self.db.commit()
+            
+        except Exception as e:
+            logger.error(f"处理问答失败: {e}")
+            yield {
+                "type": "error",
+                "data": {
+                    "message": "抱歉，我暂时无法回答您的问题。请稍后重试。"
+                }
+            }
+
     async def _handle_general_conversation(self, intent_result: IntentResult, message: str, task_history: TaskHistory) -> Dict[str, Any]:
         """处理一般对话"""
         # 使用AI生成回复

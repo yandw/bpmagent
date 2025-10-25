@@ -11,8 +11,11 @@ export const useWebSocket = () => {
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reconnectAttempts = useRef(0)
   const maxReconnectAttempts = 5
+  
+  // 使用useRef来保持streamingMessageId的实时状态
+  const streamingMessageIdRef = useRef<string | null>(null)
 
-  const { addMessage, setConnected, setLoading, setWebSocket } = useChatStore()
+  const { addMessage, setConnected, setLoading, setWebSocket, appendToMessage, updateMessage, setStreamingMessageId } = useChatStore()
   const { token } = useAuthStore()
 
   const connect = (sessionId: string) => {
@@ -35,7 +38,7 @@ export const useWebSocket = () => {
     
     // 使用相对路径，让浏览器自动处理主机名和端口
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${wsProtocol}//localhost:8001/api/chat/ws/${sessionId}`
+    const wsUrl = `${wsProtocol}//localhost:8888/api/chat/ws/${sessionId}`
     // 添加JWT token到WebSocket连接
     const wsUrlWithAuth = token ? `${wsUrl}?token=${encodeURIComponent(token)}` : wsUrl
     
@@ -67,9 +70,61 @@ export const useWebSocket = () => {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
+        console.log('收到WebSocket消息:', data.type, '当前streamingMessageId:', streamingMessageIdRef.current)
         
         // 处理不同类型的消息
-        if (data.type === 'message') {
+        if (data.type === 'message_chunk') {
+          // 流式消息块
+          if (streamingMessageIdRef.current) {
+            // 追加内容到现有流式消息
+            console.log('追加内容到现有消息:', streamingMessageIdRef.current)
+            appendToMessage(streamingMessageIdRef.current, data.content)
+          } else {
+            // 创建新的流式消息，使用更稳定的ID生成方式
+            const messageId = `streaming_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+            const message: ChatMessage = {
+              id: messageId,
+              type: 'assistant',
+              content: data.content,
+              timestamp: data.timestamp || new Date().toISOString(),
+              isStreaming: true
+            }
+            addMessage(message)
+            setStreamingMessageId(messageId)
+            streamingMessageIdRef.current = messageId
+            console.log('创建新的流式消息:', messageId)
+          }
+        } else if (data.type === 'message_complete') {
+          // 流式消息完成
+          if (streamingMessageIdRef.current) {
+            console.log('完成流式消息:', streamingMessageIdRef.current)
+            // 更新现有的流式消息，标记为完成
+            updateMessage(streamingMessageIdRef.current, {
+              content: data.content, // 使用完整内容替换
+              intent: data.intent,
+              actions: data.actions,
+              validation: data.validation,
+              isStreaming: false
+            })
+            setStreamingMessageId(null)
+            streamingMessageIdRef.current = null
+          } else {
+            console.log('没有找到流式消息ID，创建新消息')
+            // 如果没有流式消息ID，可能是直接收到完整消息，创建新消息
+            const message: ChatMessage = {
+              id: `complete_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'assistant',
+              content: data.content,
+              timestamp: data.timestamp || new Date().toISOString(),
+              intent: data.intent,
+              actions: data.actions,
+              validation: data.validation,
+              isStreaming: false
+            }
+            addMessage(message)
+          }
+        } else if (data.type === 'message') {
+          // 兼容旧版本的完整消息
           const message: ChatMessage = {
             id: Date.now().toString(),
             type: 'assistant',
@@ -84,6 +139,7 @@ export const useWebSocket = () => {
           // 处理状态消息
           console.log('状态更新:', data.content)
         } else if (data.type === 'error') {
+          // 错误消息
           const errorMessage: ChatMessage = {
             id: Date.now().toString(),
             type: 'system',
@@ -91,12 +147,24 @@ export const useWebSocket = () => {
             timestamp: data.timestamp || new Date().toISOString()
           }
           addMessage(errorMessage)
+          // 如果有流式消息正在进行，停止流式输出
+          if (streamingMessageIdRef.current) {
+            updateMessage(streamingMessageIdRef.current, { isStreaming: false })
+            setStreamingMessageId(null)
+            streamingMessageIdRef.current = null
+          }
         }
         
         setLoading(false)
       } catch (error) {
         console.error('解析WebSocket消息失败:', error)
         setLoading(false)
+        // 如果有流式消息正在进行，停止流式输出
+        if (streamingMessageIdRef.current) {
+          updateMessage(streamingMessageIdRef.current, { isStreaming: false })
+          setStreamingMessageId(null)
+          streamingMessageIdRef.current = null
+        }
       }
     }
 

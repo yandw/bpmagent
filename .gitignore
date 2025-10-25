@@ -87,6 +87,12 @@ build/
 temp/
 tmp/
 
+# 测试数据文件
+backend/tests/test_data/*.png
+backend/tests/test_data/*.jpg
+backend/tests/test_data/*.jpeg
+backend/tests/test_data/*.pdf
+
 # 其他
 *.pid
 *.seed

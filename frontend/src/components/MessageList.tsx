@@ -33,11 +33,27 @@ const MessageList: React.FC<MessageListProps> = ({ messages, loading }) => {
     }
 
     return (
-      <div className={`message-content ${message.type}`}>
-        <ReactMarkdown>{message.content}</ReactMarkdown>
+      <>
+        <div style={{ position: 'relative' }}>
+          <ReactMarkdown>{message.content}</ReactMarkdown>
+          {/* 流式消息光标动画 */}
+          {message.isStreaming && (
+            <span 
+              style={{
+                display: 'inline-block',
+                width: '2px',
+                height: '1.2em',
+                backgroundColor: '#1677ff',
+                marginLeft: '2px',
+                animation: 'blink 1s infinite',
+                verticalAlign: 'text-bottom'
+              }}
+            />
+          )}
+        </div>
         
         {/* 显示意图标签 */}
-        {message.intent && (
+        {message.intent && shouldShowIntent(message.intent) && (
           <div style={{ marginTop: 8 }}>
             <Tag color="blue">{getIntentLabel(message.intent)}</Tag>
           </div>
@@ -46,11 +62,13 @@ const MessageList: React.FC<MessageListProps> = ({ messages, loading }) => {
         {/* 显示操作按钮 */}
         {message.actions && message.actions.length > 0 && (
           <div style={{ marginTop: 8 }}>
-            {message.actions.map((action, index) => (
-              <Tag key={index} color="green">
-                {action.type}: {action.description || '执行中...'}
-              </Tag>
-            ))}
+            {message.actions
+              .filter(action => shouldShowAction(action.type))
+              .map((action, index) => (
+                <Tag key={index} color="green">
+                  {getActionLabel(action.type) || action.description || '处理中...'}
+                </Tag>
+              ))}
           </div>
         )}
         
@@ -62,8 +80,8 @@ const MessageList: React.FC<MessageListProps> = ({ messages, loading }) => {
               {message.validation.results && message.validation.results.length > 0 && (
                 <div style={{ marginTop: 4 }}>
                   {message.validation.results.map((result: any, index: number) => (
-                    <div key={index}>
-                      <Tag color={result.severity === 'error' ? 'red' : 'orange'}>
+                    <div key={index} style={{ marginBottom: 4 }}>
+                      <Tag color={result.status === 'success' ? 'green' : 'red'}>
                         {result.field}: {result.message}
                       </Tag>
                     </div>
@@ -73,7 +91,7 @@ const MessageList: React.FC<MessageListProps> = ({ messages, loading }) => {
             </Card>
           </div>
         )}
-      </div>
+      </>
     )
   }
 
@@ -86,6 +104,29 @@ const MessageList: React.FC<MessageListProps> = ({ messages, loading }) => {
       'general': '一般对话'
     }
     return intentLabels[intent] || intent
+  }
+
+  const getActionLabel = (actionType: string) => {
+    const actionLabels: Record<string, string> = {
+      'general_response': '智能回复',
+      'form_analysis': '表单分析',
+      'data_extraction': '数据提取',
+      'ocr_processing': 'OCR处理',
+      'validation': '验证结果'
+    }
+    return actionLabels[actionType]
+  }
+
+  const shouldShowIntent = (intent: string) => {
+    // 隐藏技术性或不必要的意图标签
+    const hiddenIntents = ['unknown', 'general']
+    return intent && !hiddenIntents.includes(intent.toLowerCase())
+  }
+
+  const shouldShowAction = (actionType: string) => {
+    // 隐藏技术性或不必要的操作标签
+    const hiddenActions = ['general_response', 'conversation']
+    return actionType && !hiddenActions.includes(actionType.toLowerCase())
   }
 
   const getAvatar = (type: string) => {
@@ -126,9 +167,19 @@ const MessageList: React.FC<MessageListProps> = ({ messages, loading }) => {
             {getAvatar(message.type)}
           </div>
           
-          <div style={{ flex: 1, maxWidth: '70%' }}>
-            {renderMessageContent(message)}
-            <div className="message-time">
+          <div style={{ 
+            flex: 1, 
+            maxWidth: '85%',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: message.type === 'user' ? 'flex-end' : 'flex-start'
+          }}>
+            <div className={`message-content ${message.type}`}>
+              {renderMessageContent(message)}
+            </div>
+            <div className="message-time" style={{
+              textAlign: message.type === 'user' ? 'right' : 'left'
+            }}>
               {dayjs(message.timestamp).format('HH:mm:ss')}
             </div>
           </div>

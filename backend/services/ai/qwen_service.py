@@ -1,6 +1,6 @@
 import json
 import base64
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, AsyncGenerator
 import aiohttp
 from .base import BaseAIService, IntentResult, IntentType, WebPageAnalysis, AIMessage
 
@@ -14,7 +14,7 @@ class QwenAIService(BaseAIService):
         self.base_url = config.get('base_url')
         self.model = config.get('model', 'qwen-max')
     
-    async def _call_qwen_api(self, messages: List[Dict[str, Any]], temperature: float = 0.7) -> str:
+    async def _call_qwen_api(self, messages: List[Dict[str, Any]], temperature: float = 0.7, stream: bool = False) -> str:
         """调用Qwen API"""
         headers = {
             'Authorization': f'Bearer {self.api_key}',
@@ -25,18 +25,63 @@ class QwenAIService(BaseAIService):
             'model': self.model,
             'messages': messages,
             'temperature': temperature,
-            'max_tokens': 2000
+            'max_tokens': 2000,
+            'stream': stream
         }
         
         async with aiohttp.ClientSession() as session:
             async with session.post(f'{self.base_url}/chat/completions', 
                                   headers=headers, json=data) as response:
+                if stream:
+                    # 流式响应处理在 _call_qwen_api_stream 中
+                    raise NotImplementedError("Use _call_qwen_api_stream for streaming")
+                
                 result = await response.json()
                 
                 if 'error' in result:
                     raise Exception(f"Qwen API错误: {result['error']}")
                 
                 return result['choices'][0]['message']['content']
+    
+    async def _call_qwen_api_stream(self, messages: List[Dict[str, Any]], temperature: float = 0.7) -> AsyncGenerator[str, None]:
+        """调用Qwen API流式接口"""
+        headers = {
+            'Authorization': f'Bearer {self.api_key}',
+            'Content-Type': 'application/json'
+        }
+        
+        data = {
+            'model': self.model,
+            'messages': messages,
+            'temperature': temperature,
+            'max_tokens': 2000,
+            'stream': True
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f'{self.base_url}/chat/completions', 
+                                  headers=headers, json=data) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise Exception(f"Qwen API错误: {error_text}")
+                
+                async for line in response.content:
+                    line = line.decode('utf-8').strip()
+                    if line.startswith('data: '):
+                        data_str = line[6:]  # 移除 'data: ' 前缀
+                        
+                        if data_str == '[DONE]':
+                            break
+                        
+                        try:
+                            data_json = json.loads(data_str)
+                            if 'choices' in data_json and len(data_json['choices']) > 0:
+                                delta = data_json['choices'][0].get('delta', {})
+                                content = delta.get('content', '')
+                                if content:
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
     
     async def recognize_intent(self, user_input: str, context: Dict[str, Any] = None) -> IntentResult:
         """识别用户意图"""
@@ -185,6 +230,47 @@ class QwenAIService(BaseAIService):
                 page_type='unknown',
                 confidence=0.0
             )
+
+    async def generate_response_stream(self, user_input: str, context: Dict[str, Any] = None) -> AsyncGenerator[str, None]:
+        """生成流式对话回复"""
+        context = context or {}
+        
+        system_prompt = """你是一个智能的BPM助手，专门帮助用户处理企业业务流程。
+你的主要功能包括：
+1. 协助用户进行报销申请
+2. 帮助填写各种表单
+3. 识别和处理发票信息
+4. 提供业务流程指导
+
+请用友好、专业的语气回复用户，并尽可能提供有用的建议。"""
+
+        # 构建对话历史
+        messages = [{'role': 'system', 'content': system_prompt}]
+        
+        # 添加最近的对话历史
+        recent_messages = self.get_recent_messages(5)
+        for msg in recent_messages:
+            messages.append({
+                'role': msg.role,
+                'content': msg.content
+            })
+        
+        # 添加当前用户输入
+        messages.append({'role': 'user', 'content': user_input})
+        
+        try:
+            full_response = ""
+            async for chunk in self._call_qwen_api_stream(messages, temperature=0.7):
+                full_response += chunk
+                yield chunk
+            
+            # 添加到对话历史
+            self.add_message('user', user_input)
+            self.add_message('assistant', full_response)
+            
+        except Exception as e:
+            error_msg = f"抱歉，我暂时无法处理您的请求。错误信息：{str(e)}"
+            yield error_msg
 
     async def generate_response(self, user_input: str, context: Dict[str, Any] = None) -> str:
         """生成对话回复"""

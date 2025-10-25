@@ -276,35 +276,57 @@ async def websocket_endpoint(
                 }
                 await manager.send_message(session_id, processing_message)
                 
-                # 使用BPM代理处理消息
-                response = await bpm_agent.process_user_message(user_message, message_type)
-                
-                # 如果响应包含表单数据，进行智能验证
-                if "form_data" in message_data:
-                    form_data = message_data["form_data"]
-                    validation_results = validation_service.validate_form_data(form_data)
-                    validation_summary = validation_service.get_validation_summary(validation_results)
+                # 使用BPM代理处理消息 - 流式版本
+                async for stream_response in bpm_agent.process_user_message_stream(user_message, message_type):
+                    # 如果响应包含表单数据，进行智能验证
+                    if "form_data" in message_data and stream_response.get("type") == "message_complete":
+                        form_data = message_data["form_data"]
+                        validation_results = validation_service.validate_form_data(form_data)
+                        validation_summary = validation_service.get_validation_summary(validation_results)
+                        
+                        stream_response["data"]["validation"] = {
+                            "results": [result.dict() for result in validation_results],
+                            "summary": validation_summary
+                        }
                     
-                    response["validation"] = {
-                        "results": [result.dict() for result in validation_results],
-                        "summary": validation_summary
-                    }
-                
-                # 转换响应格式以适配WebSocket消息格式
-                websocket_response = {
-                    "type": "message",
-                    "content": response.get("message", ""),
-                    "intent": response.get("type", "general"),
-                    "actions": response.get("actions", []),
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-                # 如果有验证信息，添加到响应中
-                if "validation" in response:
-                    websocket_response["validation"] = response["validation"]
-                
-                # 发送响应消息
-                await manager.send_message(session_id, websocket_response)
+                    # 转换响应格式以适配WebSocket消息格式
+                    if stream_response.get("type") == "message_chunk":
+                        # 流式消息块
+                        websocket_response = {
+                            "type": "message_chunk",
+                            "content": stream_response["data"]["content"],
+                            "message_type": stream_response["data"]["message_type"],
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    elif stream_response.get("type") == "message_complete":
+                        # 消息完成
+                        websocket_response = {
+                            "type": "message_complete",
+                            "content": stream_response["data"]["full_message"],
+                            "intent": stream_response["data"]["intent"],
+                            "actions": stream_response["data"]["actions"],
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        # 如果有验证信息，添加到响应中
+                        if "validation" in stream_response["data"]:
+                            websocket_response["validation"] = stream_response["data"]["validation"]
+                    elif stream_response.get("type") == "error":
+                        # 错误消息
+                        websocket_response = {
+                            "type": "error",
+                            "content": stream_response["data"]["message"],
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    else:
+                        # 其他类型消息（如意图识别结果）
+                        websocket_response = {
+                            "type": stream_response.get("type", "status"),
+                            "content": stream_response.get("data", {}),
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    
+                    # 发送响应消息
+                    await manager.send_message(session_id, websocket_response)
                 
             except Exception as e:
                 logger.error(f"处理消息时出错: {e}")

@@ -44,7 +44,7 @@ class TestUploadAPI:
             "auto_ocr": "true"
         }
         
-        response = client.post("/api/upload/image", files=files, data=data, headers=auth_headers)
+        response = client.post("/api/upload/file", files=files, data=data, headers=auth_headers)
         
         assert response.status_code == 200
         result = response.json()
@@ -64,7 +64,7 @@ class TestUploadAPI:
             "file": ("test_image.png", test_image, "image/png")
         }
         
-        response = client.post("/api/upload/image", files=files)
+        response = client.post("/api/upload/file", files=files)
         
         assert response.status_code == 403
     
@@ -77,24 +77,41 @@ class TestUploadAPI:
             "file": ("test.txt", test_file, "text/plain")
         }
         
-        response = client.post("/api/upload/image", files=files, headers=auth_headers)
+        response = client.post("/api/upload/file", files=files, headers=auth_headers)
         
         assert response.status_code == 400
         assert "不支持的文件类型" in response.json()["detail"]
     
     def test_upload_image_too_large(self, client: TestClient, auth_headers: dict):
         """测试上传过大文件"""
-        # 创建一个大图片（这里模拟，实际可能需要真正的大文件）
-        large_image = create_test_image(size=(5000, 5000))
+        # 创建一个真正超过10MB的大图片
+        # 使用更大的尺寸和更复杂的内容来确保文件大小超过限制
+        large_image = create_test_image(size=(10000, 10000))
+        
+        # 如果还不够大，创建一个包含随机数据的更大图片
+        from PIL import Image
+        import random
+        
+        # 创建一个包含随机像素的大图片
+        img = Image.new('RGB', (8000, 8000))
+        pixels = []
+        for i in range(8000 * 8000):
+            pixels.append((random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)))
+        img.putdata(pixels)
+        
+        img_bytes = io.BytesIO()
+        img.save(img_bytes, format='PNG', compress_level=0)  # 不压缩以增加文件大小
+        img_bytes.seek(0)
         
         files = {
-            "file": ("large_image.png", large_image, "image/png")
+            "file": ("large_image.png", img_bytes, "image/png")
         }
         
-        response = client.post("/api/upload/image", files=files, headers=auth_headers)
+        response = client.post("/api/upload/file", files=files, headers=auth_headers)
         
-        # 根据实际配置，可能返回413或400
-        assert response.status_code in [400, 413]
+        # 应该返回400错误，因为文件过大
+        assert response.status_code == 400
+        assert "文件过大" in response.json()["detail"]
     
     def test_upload_image_with_session_id(self, client: TestClient, auth_headers: dict):
         """测试带会话ID上传图片"""
@@ -116,7 +133,7 @@ class TestUploadAPI:
             "auto_ocr": "false"
         }
         
-        response = client.post("/api/upload/image", files=files, data=data, headers=auth_headers)
+        response = client.post("/api/upload/file", files=files, data=data, headers=auth_headers)
         
         assert response.status_code == 200
         result = response.json()
@@ -133,7 +150,7 @@ class TestUploadAPI:
             "auto_ocr": "false"
         }
         
-        upload_response = client.post("/api/upload/image", files=files, data=data, headers=auth_headers)
+        upload_response = client.post("/api/upload/file", files=files, data=data, headers=auth_headers)
         file_id = upload_response.json()["file_id"]
         
         # 手动触发OCR
@@ -169,7 +186,7 @@ class TestUploadAPI:
             "file": ("test_image.png", test_image, "image/png")
         }
         
-        upload_response = client.post("/api/upload/image", files=files, headers=auth_headers)
+        upload_response = client.post("/api/upload/file", files=files, headers=auth_headers)
         file_id = upload_response.json()["file_id"]
         
         # 获取文件信息
@@ -208,7 +225,7 @@ class TestUploadAPI:
             "file": ("test_image.png", test_image, "image/png")
         }
         
-        upload_response = client.post("/api/upload/image", files=files, headers=auth_headers)
+        upload_response = client.post("/api/upload/file", files=files, headers=auth_headers)
         file_id = upload_response.json()["file_id"]
         
         # 删除文件
@@ -266,7 +283,7 @@ class TestUploadAPIAsync:
             "auto_ocr": "false"
         }
         
-        response = await async_client.post("/api/upload/image", files=files, data=data, headers=headers)
+        response = await async_client.post("/api/upload/file", files=files, data=data, headers=headers)
         
         assert response.status_code == 200
         result = response.json()
@@ -277,40 +294,40 @@ class TestUploadAPIAsync:
 class TestFileValidation:
     """文件验证测试类"""
     
-    def test_validate_image_file_valid_types(self):
-        """测试验证有效图片文件类型"""
-        from backend.api.upload import validate_image_file
+    def test_validate_file_valid_types(self):
+        """测试验证有效文件类型"""
+        from backend.api.upload import validate_file
         from fastapi import UploadFile
         
-        # 模拟有效的图片文件
+        # 模拟有效的文件类型
         valid_types = [
             ("test.jpg", "image/jpeg"),
             ("test.png", "image/png"),
-            ("test.bmp", "image/bmp"),
-            ("test.tiff", "image/tiff")
+            ("test.jpeg", "image/jpeg"),
+            ("test.pdf", "application/pdf")
         ]
         
         for filename, content_type in valid_types:
             # 使用headers参数设置content_type
             mock_file = UploadFile(
                 filename=filename, 
-                file=io.BytesIO(b"fake image data"),
+                file=io.BytesIO(b"fake file data"),
                 headers={"content-type": content_type}
             )
             
-            assert validate_image_file(mock_file) is True
+            assert validate_file(mock_file) is True
     
-    def test_validate_image_file_invalid_types(self):
-        """测试验证无效图片文件类型"""
-        from backend.api.upload import validate_image_file
+    def test_validate_file_invalid_types(self):
+        """测试验证无效文件类型"""
+        from backend.api.upload import validate_file
         from fastapi import UploadFile
         
         # 模拟无效的文件类型
         invalid_types = [
             ("test.txt", "text/plain"),
-            ("test.pdf", "application/pdf"),
             ("test.doc", "application/msword"),
-            ("test.mp4", "video/mp4")
+            ("test.mp4", "video/mp4"),
+            ("test.zip", "application/zip")
         ]
         
         for filename, content_type in invalid_types:
@@ -321,18 +338,18 @@ class TestFileValidation:
                 headers={"content-type": content_type}
             )
             
-            assert validate_image_file(mock_file) is False
+            assert validate_file(mock_file) is False
     
-    def test_validate_image_file_invalid_extension(self):
+    def test_validate_file_invalid_extension(self):
         """测试验证无效文件扩展名"""
-        from backend.api.upload import validate_image_file
+        from backend.api.upload import validate_file
         from fastapi import UploadFile
         
         # 内容类型正确但扩展名错误
         mock_file = UploadFile(
             filename="test.txt", 
-            file=io.BytesIO(b"fake image data"),
+            file=io.BytesIO(b"fake file data"),
             headers={"content-type": "image/png"}
         )
         
-        assert validate_image_file(mock_file) is False
+        assert validate_file(mock_file) is False

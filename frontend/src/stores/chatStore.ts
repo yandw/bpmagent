@@ -9,6 +9,7 @@ export interface ChatMessage {
   intent?: string
   actions?: any[]
   validation?: any
+  isStreaming?: boolean  // 标识是否为流式消息
 }
 
 export interface ChatSession {
@@ -24,14 +25,18 @@ interface ChatState {
   isConnected: boolean
   isLoading: boolean
   websocket: WebSocket | null
+  streamingMessageId: string | null  // 当前流式消息的ID
   
   // Actions
   setMessages: (messages: ChatMessage[]) => void
   addMessage: (message: ChatMessage) => void
+  updateMessage: (id: string, updates: Partial<ChatMessage>) => void
+  appendToMessage: (id: string, content: string) => void
   setCurrentSession: (session: ChatSession | null) => void
   setConnected: (connected: boolean) => void
   setLoading: (loading: boolean) => void
   setWebSocket: (ws: WebSocket | null) => void
+  setStreamingMessageId: (id: string | null) => void
   
   // API Actions
   createSession: () => Promise<ChatSession | null>
@@ -46,20 +51,35 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isConnected: false,
   isLoading: false,
   websocket: null,
+  streamingMessageId: null,
 
   setMessages: (messages) => set({ messages }),
-  
+
   addMessage: (message) => set((state) => ({
     messages: [...state.messages, message]
   })),
-  
+
+  updateMessage: (id, updates) => set((state) => ({
+    messages: state.messages.map(msg => 
+      msg.id === id ? { ...msg, ...updates } : msg
+    )
+  })),
+
+  appendToMessage: (id, content) => set((state) => ({
+    messages: state.messages.map(msg => 
+      msg.id === id ? { ...msg, content: msg.content + content } : msg
+    )
+  })),
+
   setCurrentSession: (session) => set({ currentSession: session }),
-  
+
   setConnected: (connected) => set({ isConnected: connected }),
-  
+
   setLoading: (loading) => set({ isLoading: loading }),
-  
+
   setWebSocket: (ws) => set({ websocket: ws }),
+
+  setStreamingMessageId: (id) => set({ streamingMessageId: id }),
 
   createSession: async () => {
     try {

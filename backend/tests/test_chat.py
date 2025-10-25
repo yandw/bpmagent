@@ -249,7 +249,23 @@ class TestWebSocketConnection:
         token = auth_headers["Authorization"].replace("Bearer ", "")
         fake_session_id = str(uuid.uuid4())
         
-        with pytest.raises(Exception):
-            # WebSocket连接应该失败，因为会话不存在
-            with client.websocket_connect(f"/api/chat/ws/{fake_session_id}?token={token}"):
-                pass
+        # WebSocket连接应该被服务器关闭，因为会话不存在
+        # 我们需要检查连接是否会被正确关闭
+        connection_closed = False
+        try:
+            with client.websocket_connect(f"/api/chat/ws/{fake_session_id}?token={token}") as websocket:
+                # 尝试接收消息，如果会话不存在，连接应该被关闭
+                try:
+                    # 等待一小段时间看是否有消息或连接关闭
+                    data = websocket.receive_text()
+                    # 如果能接收到消息，说明连接没有被正确关闭
+                    pytest.fail(f"WebSocket连接应该因为会话不存在而被关闭，但收到了消息: {data}")
+                except Exception:
+                    # 连接被关闭或出现异常是预期的行为
+                    connection_closed = True
+        except Exception:
+            # 连接建立失败也是预期的行为
+            connection_closed = True
+        
+        # 验证连接确实被关闭了
+        assert connection_closed, "WebSocket连接应该因为会话不存在而被关闭"
