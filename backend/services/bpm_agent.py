@@ -776,69 +776,141 @@ class BPMAgentService:
     async def process_ocr_result(self, ocr_result: OCRResult) -> Dict[str, Any]:
         """处理OCR识别结果"""
         try:
-            # 将OCR结果转换为结构化数据
-            if ocr_result:
-                ocr_data = {
-                    'invoice_number': ocr_result.invoice_number,
-                    'invoice_date': ocr_result.invoice_date,
-                    'seller_name': ocr_result.seller_name,
-                    'buyer_name': ocr_result.buyer_name,
-                    'total_amount': str(ocr_result.total_amount) if ocr_result.total_amount else None,
-                    'tax_amount': str(ocr_result.tax_amount) if ocr_result.tax_amount else None
+            # 验证OCR结果
+            if not ocr_result:
+                return {
+                    "message": "OCR识别失败，未收到识别结果。请确保图片清晰且包含发票内容。",
+                    "type": "error",
+                    "actions": [{
+                        "type": "request_upload",
+                        "accept": "image/*",
+                        "description": "请重新上传清晰的发票图片"
+                    }]
                 }
+            
+            # 检查OCR是否成功
+            if not ocr_result.success:
+                error_msg = ocr_result.error or "未知错误"
+                return {
+                    "message": f"OCR识别失败：{error_msg}。请确保图片清晰且包含发票内容。",
+                    "type": "error",
+                    "actions": [{
+                        "type": "request_upload",
+                        "accept": "image/*",
+                        "description": "请重新上传清晰的发票图片"
+                    }]
+                }
+            
+            # 将OCR结果转换为结构化数据
+            ocr_data = {}
+            
+            # 基础发票信息
+            if ocr_result.invoice_number:
+                ocr_data['invoice_number'] = ocr_result.invoice_number
+            if ocr_result.invoice_date:
+                ocr_data['invoice_date'] = ocr_result.invoice_date
+            if ocr_result.invoice_type:
+                ocr_data['invoice_type'] = ocr_result.invoice_type
                 
-                # 过滤空值
-                ocr_data = {k: v for k, v in ocr_data.items() if v}
+            # 金额信息
+            if ocr_result.total_amount:
+                ocr_data['total_amount'] = str(ocr_result.total_amount)
+            if ocr_result.tax_amount:
+                ocr_data['tax_amount'] = str(ocr_result.tax_amount)
+            if ocr_result.net_amount:
+                ocr_data['net_amount'] = str(ocr_result.net_amount)
                 
-                # 更新已提取的数据
-                self.extracted_data.update(ocr_data)
+            # 公司信息
+            if ocr_result.seller_name:
+                ocr_data['seller_name'] = ocr_result.seller_name
+            if ocr_result.seller_tax_id:
+                ocr_data['seller_tax_id'] = ocr_result.seller_tax_id
+            if ocr_result.buyer_name:
+                ocr_data['buyer_name'] = ocr_result.buyer_name
+            if ocr_result.buyer_tax_id:
+                ocr_data['buyer_tax_id'] = ocr_result.buyer_tax_id
                 
-                # 如果当前有页面，尝试自动填写
-                if self.current_page_state:
-                    fill_result = await self._auto_fill_form_with_data(ocr_data)
-                    
-                    if fill_result["success"]:
-                        return {
-                            "message": f"OCR识别完成！已提取 {len(ocr_data)} 项信息并自动填写到表单中。",
-                            "type": "success",
-                            "actions": [{
-                                "type": "ocr_processed_and_filled",
-                                "ocr_data": ocr_data,
-                                "filled_fields": fill_result["filled_fields"]
-                            }]
-                        }
-                    else:
-                        return {
-                            "message": f"OCR识别完成！已提取 {len(ocr_data)} 项信息，但自动填写遇到问题。",
-                            "type": "partial_success",
-                            "actions": [{
-                                "type": "ocr_processed",
-                                "ocr_data": ocr_data,
-                                "fill_errors": fill_result["failed_fields"]
-                            }]
-                        }
-                else:
+            # 商品明细
+            if hasattr(ocr_result, 'items') and ocr_result.items:
+                ocr_data['items'] = ocr_result.items
+            
+            # 检查置信度
+            confidence = getattr(ocr_result, 'confidence', 0.0)
+            if confidence < 0.8:
+                logger.warning(f"OCR识别置信度较低: {confidence}")
+                
+            # 检查是否提取到有效信息
+            if not ocr_data:
+                return {
+                    "message": "OCR识别完成，但未能提取到有效的发票信息。请确保图片清晰且包含完整的发票内容。",
+                    "type": "warning",
+                    "actions": [{
+                        "type": "request_upload",
+                        "accept": "image/*",
+                        "description": "请重新上传更清晰的发票图片"
+                    }]
+                }
+            
+            # 更新已提取的数据
+            self.extracted_data.update(ocr_data)
+            
+            # 构建成功消息
+            extracted_count = len(ocr_data)
+            items_count = len(ocr_data.get('items', []))
+            confidence_text = f"（识别置信度：{confidence:.1%}）" if confidence > 0 else ""
+            
+            success_message = f"OCR识别完成！已提取 {extracted_count} 项发票信息"
+            if items_count > 0:
+                success_message += f"，包含 {items_count} 个商品明细"
+            success_message += confidence_text
+            
+            # 如果当前有页面，尝试自动填写
+            if self.current_page_state:
+                fill_result = await self._auto_fill_form_with_data(ocr_data)
+                
+                if fill_result["success"]:
                     return {
-                        "message": f"OCR识别完成！已提取 {len(ocr_data)} 项信息。请打开要填写的表单页面，我将自动填写这些信息。",
+                        "message": f"{success_message}，并已自动填写到表单中。",
                         "type": "success",
                         "actions": [{
+                            "type": "ocr_processed_and_filled",
+                            "ocr_data": ocr_data,
+                            "filled_fields": fill_result["filled_fields"],
+                            "confidence": confidence
+                        }]
+                    }
+                else:
+                    return {
+                        "message": f"{success_message}，但自动填写遇到问题。",
+                        "type": "partial_success",
+                        "actions": [{
                             "type": "ocr_processed",
-                            "ocr_data": ocr_data
+                            "ocr_data": ocr_data,
+                            "fill_errors": fill_result["failed_fields"],
+                            "confidence": confidence
                         }]
                     }
             else:
                 return {
-                    "message": "OCR识别完成，但未能提取到有效信息。请确保图片清晰且包含发票内容。",
-                    "type": "warning",
-                    "actions": []
+                    "message": f"{success_message}。请打开要填写的表单页面，我将自动填写这些信息。",
+                    "type": "success",
+                    "actions": [{
+                        "type": "ocr_processed",
+                        "ocr_data": ocr_data,
+                        "confidence": confidence
+                    }]
                 }
                 
         except Exception as e:
             logger.error(f"处理OCR结果失败: {e}")
             return {
-                "message": "处理OCR结果时出现错误。",
+                "message": "处理OCR结果时出现系统错误，请稍后重试。",
                 "type": "error",
-                "actions": []
+                "actions": [{
+                    "type": "request_upload",
+                    "accept": "image/*",
+                    "description": "请重新上传发票图片"
+                }]
             }
     
     async def cleanup(self):

@@ -164,24 +164,50 @@ async def upload_file(
         
         ocr_result = None
         
-        # 如果启用自动OCR，进行文字识别
-        if auto_ocr:
+        # 自动OCR处理
+        if auto_ocr and file_path:
             try:
+                logger.info(f"开始OCR识别: {file_path}")
                 ocr_service = create_ocr_service()
-                ocr_result = await ocr_service.extract_text_from_image(file_path)
                 
-                # 更新任务历史
-                task_history.ocr_result = ocr_result if ocr_result else None
-                task_history.task_status = "completed"
-                task_history.status = "completed"
+                if hasattr(ocr_service, 'extract_text_from_image'):
+                    ocr_result = await ocr_service.extract_text_from_image(file_path)
+                else:
+                    # 兼容旧接口
+                    with open(file_path, 'rb') as f:
+                        image_data = f.read()
+                    ocr_result = await ocr_service.recognize_invoice(image_data)
                 
-                logger.info(f"OCR识别完成: {file.filename}")
-                
+                # 检查OCR结果
+                if ocr_result and ocr_result.success:
+                    # 更新任务状态为OCR完成
+                    task_history.status = "ocr_completed"
+                    task_history.ocr_result = ocr_result.dict()
+                    
+                    # 提取商品项目数量用于日志
+                    items_count = len(ocr_result.items) if ocr_result.items else 0
+                    confidence_text = f"，置信度: {ocr_result.confidence:.1%}" if ocr_result.confidence > 0 else ""
+                    
+                    logger.info(f"OCR识别成功: {file_path}，提取到 {len([k for k, v in ocr_result.dict().items() if v and k != 'raw_result'])} 项信息，包含 {items_count} 个商品明细{confidence_text}")
+                else:
+                    # OCR失败，记录错误信息
+                    task_history.status = "ocr_failed"
+                    error_msg = ocr_result.error if ocr_result else "OCR识别失败"
+                    task_history.ocr_result = {"error": error_msg}
+                    logger.error(f"OCR识别失败: {file_path} - {error_msg}")
+                    
             except Exception as e:
-                logger.error(f"OCR识别失败: {e}")
-                task_history.task_status = "ocr_failed"
+                # OCR异常，记录错误
                 task_history.status = "ocr_failed"
-                task_history.error_message = f"OCR识别失败: {str(e)}"
+                task_history.ocr_result = {"error": f"OCR处理异常: {str(e)}"}
+                logger.error(f"OCR处理异常: {file_path} - {e}")
+            
+            # 保存任务状态
+            try:
+                db.commit()
+            except Exception as e:
+                logger.error(f"保存OCR结果失败: {e}")
+                db.rollback()
         else:
             task_history.task_status = "completed"
             task_history.status = "completed"
@@ -239,33 +265,78 @@ async def process_ocr(
     
     try:
         # 进行OCR识别
+        logger.info(f"开始手动OCR识别: {file_path}")
         ocr_service = create_ocr_service()
-        ocr_result = await ocr_service.extract_text_from_image(file_path)
         
-        # 更新任务记录
-        task.ocr_results = ocr_result if ocr_result else None
-        task.task_status = "completed"
-        task.status = "completed"
-        db.commit()
+        if hasattr(ocr_service, 'extract_text_from_image'):
+            ocr_result = await ocr_service.extract_text_from_image(file_path)
+        else:
+            # 兼容旧接口
+            with open(file_path, 'rb') as f:
+                image_data = f.read()
+            ocr_result = await ocr_service.recognize_invoice(image_data)
         
-        return {
-            "file_id": file_id,
-            "ocr_result": ocr_result if ocr_result else None,
-            "status": "completed"
-        }
+        # 检查OCR结果
+        if ocr_result and ocr_result.success:
+            # 更新任务记录为成功
+            task.ocr_result = ocr_result.dict()
+            task.status = "ocr_completed"
+            
+            # 提取商品项目数量用于日志
+            items_count = len(ocr_result.items) if ocr_result.items else 0
+            confidence_text = f"，置信度: {ocr_result.confidence:.1%}" if ocr_result.confidence > 0 else ""
+            
+            logger.info(f"手动OCR识别成功: {file_path}，提取到 {len([k for k, v in ocr_result.dict().items() if v and k != 'raw_result'])} 项信息，包含 {items_count} 个商品明细{confidence_text}")
+            
+            try:
+                db.commit()
+            except Exception as e:
+                logger.error(f"保存OCR结果失败: {e}")
+                db.rollback()
+                raise HTTPException(status_code=500, detail="保存OCR结果失败")
+            
+            return {
+                "file_id": file_id,
+                "ocr_result": ocr_result.dict(),
+                "status": "completed",
+                "message": f"OCR识别成功，提取到 {items_count} 个商品明细{confidence_text}"
+            }
+        else:
+            # OCR失败
+            error_msg = ocr_result.error if ocr_result else "OCR识别失败"
+            task.ocr_result = {"error": error_msg}
+            task.status = "ocr_failed"
+            
+            logger.error(f"手动OCR识别失败: {file_path} - {error_msg}")
+            
+            try:
+                db.commit()
+            except Exception as e:
+                logger.error(f"保存OCR错误结果失败: {e}")
+                db.rollback()
+            
+            return {
+                "file_id": file_id,
+                "error": error_msg,
+                "status": "failed"
+            }
         
     except Exception as e:
-        logger.error(f"OCR识别失败: {e}")
+        logger.error(f"手动OCR处理异常: {file_path} - {e}")
         
         # 更新任务状态为失败
-        task.task_status = "failed"
-        task.status = "failed"
-        task.error_message = f"OCR识别失败: {str(e)}"
-        db.commit()
+        task.status = "ocr_failed"
+        task.ocr_result = {"error": f"OCR处理异常: {str(e)}"}
+        
+        try:
+            db.commit()
+        except Exception as db_e:
+            logger.error(f"保存OCR异常结果失败: {db_e}")
+            db.rollback()
         
         return {
             "file_id": file_id,
-            "error": f"OCR识别失败: {str(e)}",
+            "error": f"OCR处理异常: {str(e)}",
             "status": "failed"
         }
 

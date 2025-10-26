@@ -8,6 +8,12 @@ from io import BytesIO
 
 class OCRResult(BaseModel):
     """OCR识别结果模型"""
+    # 识别状态
+    success: bool = True  # 识别是否成功
+    error_message: Optional[str] = None  # 错误信息
+    error: Optional[str] = None  # 错误信息 (兼容属性)
+    data: Optional[Dict[str, Any]] = None  # 识别数据 (兼容属性)
+    
     # 发票基础信息
     invoice_type: Optional[str] = None  # 发票类型
     invoice_number: Optional[str] = None  # 发票号码

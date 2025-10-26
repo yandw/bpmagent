@@ -81,7 +81,7 @@ const ChatPage: React.FC = () => {
       formData.append('file', file)
       formData.append('ocr', 'true')
 
-      const response = await fetch('/api/upload/image', {
+      const response = await fetch('/api/upload/file', {
         method: 'POST',
         body: formData,
         headers: {

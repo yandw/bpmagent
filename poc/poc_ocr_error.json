@@ -1,0 +1,5 @@
+{
+  "error": "Error: illegalImageContent code: 400, The corresponding image content is missing. request id: 464A8870-F7B8-5296-A162-D7BF0C65F111 Response: {'RequestId': '464A8870-F7B8-5296-A162-D7BF0C65F111', 'HostId': 'ocr-api.cn-hangzhou.aliyuncs.com', 'Code': 'illegalImageContent', 'Message': 'The corresponding image content is missing.', 'Recommend': 'https://api.aliyun.com/troubleshoot?q=illegalImageContent&product=ocr-api&requestId=464A8870-F7B8-5296-A162-D7BF0C65F111', 'statusCode': 400}",
+  "message": "code: 400, The corresponding image content is missing. request id: 464A8870-F7B8-5296-A162-D7BF0C65F111",
+  "recommend": "https://api.aliyun.com/troubleshoot?q=illegalImageContent&product=ocr-api&requestId=464A8870-F7B8-5296-A162-D7BF0C65F111"
+}

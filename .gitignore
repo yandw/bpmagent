@@ -48,6 +48,9 @@ uploads/
 
 # 测试缓存
 .pytest_cache/
+
+# Trae AI 配置文件
+.trae/
 .coverage
 htmlcov/
 .tox/
