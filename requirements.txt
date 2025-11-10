@@ -25,6 +25,9 @@ passlib[bcrypt]==1.7.4
 python-dotenv==1.0.0
 loguru==0.7.2
 
+# 浏览器自动化
+playwright==1.55.0
+
 # 开发工具
 pytest==7.4.3
 pytest-asyncio==0.21.1

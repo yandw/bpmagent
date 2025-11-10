@@ -144,6 +144,9 @@ class PlaywrightBrowserService(BaseBrowserService):
                     placeholder = await locator.get_attribute('placeholder')
                     required = await locator.get_attribute('required') is not None
                     
+                    # 初始化options变量
+                    options = []
+                    
                     # 确定元素类型
                     if tag_name == 'input':
                         if element_type in ['text', 'email', 'password', 'number']:
@@ -169,8 +172,8 @@ class PlaywrightBrowserService(BaseBrowserService):
                     else:
                         continue  # 跳过不支持的元素类型
                     
-                    # 生成选择器
-                    element_selector = f"{selector}:nth-child({i+1})"
+                    # 生成更准确的选择器
+                    element_selector = f"{selector}:nth-of-type({i+1})"
                     
                     page_element = PageElement(
                         element_type=elem_type,
@@ -178,7 +181,7 @@ class PlaywrightBrowserService(BaseBrowserService):
                         name=name,
                         value=value,
                         required=required,
-                        options=options if elem_type == ElementType.SELECT else [],
+                        options=options,
                         placeholder=placeholder
                     )
                     

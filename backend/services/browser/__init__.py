@@ -1,5 +1,5 @@
 from .base import BaseBrowserService, PageElement, ElementType, BrowserAction, PageState
-# from .playwright_service import PlaywrightBrowserService
+from .playwright_service import PlaywrightBrowserService
 from .mock_service import MockBrowserService
 from backend.core.config import settings
 from typing import Dict, Any
@@ -23,8 +23,8 @@ def create_browser_service(config: Dict[str, Any] = None) -> BaseBrowserService:
             'user_agent': None
         }
     
-    # 暂时使用模拟服务避免Playwright依赖问题
-    return MockBrowserService()
+    # 使用Playwright服务
+    return PlaywrightBrowserService(config)
 
 
 __all__ = [
